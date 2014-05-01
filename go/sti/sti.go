@@ -44,6 +44,7 @@ func Execute() {
 		envString   string
 		buildReq    sti.BuildRequest
 		validateReq sti.ValidateRequest
+		exerciseReq sti.ExerciseRequest
 	)
 
 	stiCmd := &cobra.Command{
@@ -128,6 +129,72 @@ func Execute() {
 	}
 	validateCmd.Flags().BoolVarP(&(validateReq.Incremental), "incremental", "I", false, "Validate for an incremental build")
 	stiCmd.AddCommand(validateCmd)
+
+	exerciseCmd := &cobra.Command{
+		Use:   "exercise SOURCE BUILD_IMAGE APP_IMAGE_TAG",
+		Short: "Exercise an image",
+		Long:  "Exercise an image",
+		Run: func(cmd *cobra.Command, args []string) {
+			// if we're not verbose, make sure the logger doesn't print out timestamps
+			if !req.Verbose {
+				log.SetFlags(0)
+			}
+
+			buildReq.Request = req
+			buildReq.Source = args[0]
+			buildReq.BaseImage = args[1]
+			buildReq.Tag = args[2]
+			buildReq.Writer = os.Stdout
+
+			envs, _ := parseEnvs(envString)
+			buildReq.Environment = envs
+
+			if buildReq.WorkingDir == "tempdir" {
+				var err error
+				buildReq.WorkingDir, err = ioutil.TempDir("", "sti")
+				if err != nil {
+					fmt.Println(err.Error())
+					return
+				}
+				defer os.Remove(buildReq.WorkingDir)
+			}
+
+			exerciseReq.BuildRequest = buildReq
+			if exerciseReq.Title == "" {
+				log.Println("A title is required")
+				return
+			}
+
+			if exerciseReq.Port == "" {
+				log.Println("A port is required")
+				return
+			} else if !strings.HasSuffix(exerciseReq.Port, "/tcp") {
+				exerciseReq.Port += "/tcp"
+			}
+
+			res, err := sti.Exercise(exerciseReq)
+			if err != nil {
+				fmt.Printf("An error occured: %s\n", err.Error())
+				return
+			} else {
+				log.Println("Check passed")
+			}
+
+			for _, message := range res.Messages {
+				fmt.Println(message)
+			}
+		},
+	}
+	exerciseCmd.Flags().BoolVar(&(buildReq.Clean), "clean", false, "Perform a clean build")
+	exerciseCmd.Flags().StringVar(&(req.WorkingDir), "dir", "tempdir", "Directory where generated Dockerfiles and other support scripts are created")
+	exerciseCmd.Flags().StringVarP(&envString, "env", "e", "", "Specify an environment var NAME=VALUE,NAME2=VALUE2,...")
+	exerciseCmd.Flags().StringVarP(&(buildReq.Method), "method", "m", "run", "Specify a method to build with. build -> 'docker build', run -> 'docker run'")
+	exerciseCmd.Flags().StringVarP(&(buildReq.Ref), "ref", "r", "", "Specify a ref to check-out")
+	exerciseCmd.Flags().StringVar(&(buildReq.CallbackUrl), "callbackUrl", "", "Specify a URL to invoke via HTTP POST upon build completion")
+	exerciseCmd.Flags().StringVar(&(exerciseReq.Port), "port", "", "Specify a port to validate with an HTTP request")
+	exerciseCmd.Flags().StringVar(&(exerciseReq.Path), "path", "", "Specify a path to validate with an HTTP request")
+	exerciseCmd.Flags().StringVarP(&(exerciseReq.Title), "title", "t", "", "Specify an HTML title to validate against")
+	stiCmd.AddCommand(exerciseCmd)
 
 	stiCmd.Execute()
 }
